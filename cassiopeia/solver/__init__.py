@@ -13,3 +13,5 @@ from .UPGMASolver import UPGMASolver
 from .VanillaGreedySolver import VanillaGreedySolver
 from .SpectralNeighborJoiningSolver import SpectralNeighborJoiningSolver
 from . import dissimilarity_functions as dissimilarity
+from .SuperTreeSolver import SuperTreeSolver
+
