@@ -6,7 +6,6 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import gurobipy as gp
-import matplotlib.pyplot as plt
 from gurobipy import GRB
 from cassiopeia.data.CassiopeiaTree import CassiopeiaTree
 from cassiopeia.solver.CassiopeiaSolver import CassiopeiaSolver
@@ -22,28 +21,41 @@ except ImportError:
 def _lazy_M_constraints(x: gp.tupledict, B: int, C: int) -> Callable:
 
     def _callback(m: gp.Model, where: int) -> None:
-        if where == GRB.Callback.MIPSOL:
+        # if where == GRB.Callback.MIPSOL:
+        if where != GRB.Callback.MIPSOL and where != GRB.Callback.MIPNODE:
+            return
+
+        elif where == GRB.Callback.MIPSOL:
             sols = m.cbGetSolution(x.values())
-            sols = np.reshape(sols, (B, C))
-            sols = xp.asarray(sols)
+            add_constr_func = m.cbLazy
 
-            C1 = np.argmax(sols[:, None, ...] - sols[None, :], axis=-1)
-            C2 = np.argmax(sols[:, None, ...] + sols[None, :], axis=-1)
-            C3 = np.argmax(-sols[:, None, ...] + sols[None, :], axis=-1)
+        elif where == GRB.Callback.MIPNODE:
+            if m.cbGet(GRB.Callback.MIPNODE_STATUS) != GRB.OPTIMAL:
+                return
 
-            if hasattr(C1, "get"):
-                C1 = C1.get()
-                C2 = C2.get()
-                C3 = C3.get()
+            sols = m.cbGetNodeRel(x.values())
+            add_constr_func = m.cbCut
 
-            for b1 in range(B):
-                for b2 in range(b1):
-                    c1 = C1[b1, b2]
-                    c2 = C2[b1, b2]
-                    c3 = C3[b1, b2]
-                    m.cbLazy(
-                        (x[b1, c1] - x[b2, c1]) + (x[b1, c2] + x[b2, c2]) + (x[b2, c3] - x[b1, c3])  <= 3
-                    )
+        sols = np.reshape(sols, (B, C))
+        sols = xp.asarray(sols)
+
+        C1 = np.argmax(sols[:, None, ...] - sols[None, :], axis=-1)
+        C2 = np.argmax(sols[:, None, ...] + sols[None, :], axis=-1)
+        C3 = np.argmax(-sols[:, None, ...] + sols[None, :], axis=-1)
+
+        if hasattr(C1, "get"):
+            C1 = C1.get()
+            C2 = C2.get()
+            C3 = C3.get()
+
+        for b1 in range(B):
+            for b2 in range(b1):
+                c1 = C1[b1, b2]
+                c2 = C2[b1, b2]
+                c3 = C3[b1, b2]
+                add_constr_func(
+                    (x[b1, c1] - x[b2, c1]) + (x[b1, c2] + x[b2, c2]) + (x[b2, c3] - x[b1, c3])  <= 3
+                )
 
     return _callback
 
@@ -164,7 +176,11 @@ def character_matrix_to_tree(
     
     # compute tree
     T = nx.DiGraph()
-    queue = [(0, cell) for cell in character_matrix.index]
+    queue = []
+    for cell in character_matrix.index:
+        T.add_node(cell, height=0)
+        queue.append((0, cell))
+
     seen = set()
 
     while queue:
@@ -177,25 +193,39 @@ def character_matrix_to_tree(
 
         parent = sorted(G.predecessors(node), key=lambda x: G.nodes[x]["height"])[0]
 
+        if node not in T.nodes:
+            T.add_node(node, height=G.nodes[node]["height"])
+
+        if parent not in T.nodes:
+            T.add_node(parent, height=G.nodes[parent]["height"])
+
         T.add_edge(parent, node)
+
         heapq.heappush(queue, (G.nodes[parent]["height"], parent))
-    
-    # pos = nx.spring_layout(G)
-
-    # # Draw the tree
-    # nx.draw(T, pos, with_labels=True, arrows=False, node_size=700, node_color="skyblue", font_size=10)
-
-    # # Display the plot
-    # plt.show()
 
     for c, siblings in zip(character_matrix.index, duplicated_cells):
+        if len(siblings) == 1:
+            continue
+
+        # deleting bundled sibling node
         parent = next(T.predecessors(c))
-        new_artificial_node = c + "_dup"
+        parent_height = T.nodes[parent]["height"]
         T.remove_edge(parent, c)
+
+        # adding new bundled sibling node
+        new_artificial_node = c + "_dup"
+        height = np.ceil(np.log2(len(siblings)))
+        height = min(height, parent_height - 1e-6)  # hack to avoid height equal to parent
+
+        T.add_node(new_artificial_node, height=int(height))
         T.add_edge(parent, new_artificial_node)
 
         for sibling in siblings:
+            T.add_node(sibling, height=0)
             T.add_edge(new_artificial_node, sibling)
+
+    for node in T.nodes:
+        T.nodes[node]["height"] = -int(T.nodes[node]["height"])
 
     return T
 
