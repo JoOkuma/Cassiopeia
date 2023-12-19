@@ -63,7 +63,7 @@ def _lazy_M_constraints(x: gp.tupledict, B: int, C: int) -> Callable:
 def lazy_super_tree_ILP(
     character_matrix: np.ndarray,
     cell_weights: np.ndarray,
-    deletion_weight: float,
+    deletion_weight: Optional[float],
 ) -> np.ndarray:
     """
     Fill in missing reads in the barcode-leaf table using formulation 4.1 from [1]_.
@@ -93,6 +93,7 @@ def lazy_super_tree_ILP(
     
     deletion_weight : float
         Deletion weight used to balance insertion vs deletion.
+        If None, deletion is not allowed and not penalized.
 
     Returns
     -------
@@ -104,8 +105,6 @@ def lazy_super_tree_ILP(
     # initial implementation was for a character matrix with shape (barcode, cells)
     tb = character_matrix.T
 
-    insertion_weight = 1 - deletion_weight
-
     B = tb.shape[0]
     C = tb.shape[1]
 
@@ -114,13 +113,33 @@ def lazy_super_tree_ILP(
 
     x = m.addVars(B, C, vtype=GRB.BINARY)
 
-    m.setObjective(
-        gp.quicksum(
-            x[b, c] * cell_weights[c] * (-deletion_weight if tb[b, c] else insertion_weight)
+    if deletion_weight is None:
+        # setting existing barcodes reads as hard constraints
+        m.addConstrs(
+            x[b, c] == 1
             for b in range(B)
             for c in range(C)
+            if tb[b, c]
         )
-    )
+        # objective without deletion weight
+        m.setObjective(
+            gp.quicksum(
+                x[b, c] * cell_weights[c]
+                for b in range(B)
+                for c in range(C)
+            )
+        )
+
+    else:
+        insertion_weight = 1 - deletion_weight
+
+        m.setObjective(
+            gp.quicksum(
+                x[b, c] * cell_weights[c] * (-deletion_weight if tb[b, c] else insertion_weight)
+                for b in range(B)
+                for c in range(C)
+            )
+        )
 
     lazy_constraints = _lazy_M_constraints(x, B, C)
     m.optimize(lazy_constraints)
@@ -231,21 +250,6 @@ def character_matrix_to_tree(
 
 
 class SuperTreeSolver(CassiopeiaSolver):
-# class CassiopeiaSolver(abc.ABC):
-    """
-    FIXME
-    CassiopeiaSolver is an abstract class that all inference algorithms derive
-    from. At minimum, all CassiopeiaSolver subclasses will store a character
-    matrix and implement a solver procedure.
-
-    Args:
-        prior_transformation: A function defining a transformation on the priors
-            in forming weights. Supports the following transformations:
-                "negative_log": Transforms each probability by the negative log
-                "inverse": Transforms each probability p by taking 1/p
-                "square_root_inverse": Transforms each probability by the
-                    the square root of 1/p
-    """
     def __init__(self):
         super().__init__()
 
@@ -253,22 +257,22 @@ class SuperTreeSolver(CassiopeiaSolver):
     def solve(
         self,
         cassiopeia_tree: CassiopeiaTree,
-        deletion_weight: float = 0.999,
+        deletion_weight: Optional[float] = 0.999,
         layer: Optional[str] = None,
         collapse_mutationless_edges: bool = True,
         logfile: str = "stdout.log",
     ):
-        """Solves the inference problem.
-        # FIXME: UPDATE DOC
+        """
+        Solves the inference problem.
+
         Args:
             cassiopeia_tree: CassiopeiaTree storing character information for
                 phylogenetic inference.
+            deletion_weight: Weight to assign to deletion events. If None,
+                deletion is not allowed and not penalized.
             layer: Layer storing the character matrix for solving. If None, the
                 default character matrix is used in the CassiopeiaTree.
-            collapse_mutationless_edges: Indicates if the final reconstructed
-                tree should collapse mutationless edges based on internal states
-                inferred by Camin-Sokal parsimony. In scoring accuracy, this
-                removes artifacts caused by arbitrarily resolving polytomies.
+            collapse_mutationless_edges: Must be True, kept for compatibility.
             logfile: File location to log output.
         """
         pass
