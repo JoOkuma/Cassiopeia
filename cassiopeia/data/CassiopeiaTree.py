@@ -306,6 +306,8 @@ class CassiopeiaTree:
         if set(self.leaves) != set(character_matrix.index.values):
             raise CassiopeiaTreeError(
                 "Character matrix index does not match set of leaves."
+                f"\n{len(self.leaves)=} {len(character_matrix.index.values)=}"
+                f"\n{sorted(self.leaves)[:10]=}\n{sorted(character_matrix.index.values)[:10]=}"
             )
 
         for n in self.leaves:
